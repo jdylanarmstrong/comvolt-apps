@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "Comvolt",
+    "slug": "comvolt",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.comvolt.monitor",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "Allow Comvolt to connect to your battery system",
+        "NSBluetoothPeripheralUsageDescription": "Allow Comvolt to connect to your battery system",
+        "UIBackgroundModes": ["bluetooth-central"]
+      }
+    },
+    "android": {
+      "package": "com.comvolt.monitor",
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0E17",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": ["central"],
+          "bluetoothAlwaysPermission": "Allow Comvolt to connect to your battery system"
+        }
+      ],
+      ["react-native-reanimated"],
+      [
+        "expo-build-properties",
+        {
+          "android": { "minSdkVersion": 23 },
+          "ios": { "deploymentTarget": "15.1" }
+        }
+      ]
+    ]
+  }
+}
