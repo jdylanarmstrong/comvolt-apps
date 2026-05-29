@@ -3,25 +3,30 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * React Native 0.76's bundled `fmt` library uses `consteval` in a way that
- * newer Xcode/Clang toolchains reject ("call to consteval function ... is not
- * a constant expression"). Defining FMT_USE_CONSTEVAL=0 forces `fmt` to fall
- * back to `constexpr`, which compiles cleanly.
+ * React Native 0.76 bundles fmt 11.0.2, whose `basic_format_string` constructor
+ * is marked `consteval`. Newer Apple Clang (Xcode 16.3+) rejects the way fmt
+ * calls it ("call to consteval function ... is not a constant expression").
  *
- * Applied to every Pods target as a preprocessor definition. The Ruby is
- * written to handle GCC_PREPROCESSOR_DEFINITIONS being nil, a String, or an
- * Array (CocoaPods is inconsistent), so the define always lands correctly.
+ * fmt 11.0.2 defines FMT_USE_CONSTEVAL *unconditionally* (no #ifndef guard), so
+ * a `-DFMT_USE_CONSTEVAL=0` compiler flag gets overwritten by the header and has
+ * no effect. The only reliable fix is to patch the header so the FMT_CONSTEVAL
+ * macro expands to nothing, turning the constructor into a plain function.
  *
- * This is a config plugin so it survives `expo prebuild --clean`.
+ * The patch runs inside the Podfile `post_install` hook, which executes after
+ * CocoaPods has downloaded the git-based fmt pod into the sandbox. It is
+ * idempotent and survives `expo prebuild --clean`.
  */
 const INJECT = `
-    # Injected by withFmtConstevalFix: fix fmt consteval build error on newer Xcode
-    installer.pods_project.targets.each do |fmt_target|
-      fmt_target.build_configurations.each do |fmt_config|
-        defs = fmt_config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
-        defs = [defs] unless defs.is_a?(Array)
-        defs << 'FMT_USE_CONSTEVAL=0' unless defs.include?('FMT_USE_CONSTEVAL=0')
-        fmt_config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs
+    # Injected by withFmtConstevalFix: neutralize fmt's consteval constructor,
+    # which newer Apple Clang rejects. fmt 11.0.2 forces FMT_USE_CONSTEVAL on, so
+    # a compiler define can't override it -- patch the header directly.
+    fmt_base_h = File.join(installer.sandbox.root.to_s, 'fmt', 'include', 'fmt', 'base.h')
+    if File.exist?(fmt_base_h)
+      fmt_src = File.read(fmt_base_h)
+      fmt_patched = fmt_src.sub(/^#\\s*define\\s+FMT_CONSTEVAL\\s+consteval\\s*$/, '#  define FMT_CONSTEVAL')
+      if fmt_patched != fmt_src
+        File.write(fmt_base_h, fmt_patched)
+        Pod::UI.puts '[withFmtConstevalFix] Neutralized FMT_CONSTEVAL in fmt/base.h'
       end
     end
 `;
@@ -36,11 +41,10 @@ module.exports = function withFmtConstevalFix(config) {
       );
       let contents = fs.readFileSync(podfilePath, 'utf8');
 
-      if (contents.includes('FMT_USE_CONSTEVAL=0')) {
+      if (contents.includes('withFmtConstevalFix')) {
         return cfg;
       }
 
-      // Inject into the existing `post_install do |installer|` block.
       const marker = /post_install do \|installer\|[^\n]*\n/;
       if (marker.test(contents)) {
         contents = contents.replace(marker, (match) => match + INJECT);
