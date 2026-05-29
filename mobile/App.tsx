@@ -1,3 +1,4 @@
+import 'react-native-reanimated';
 import React from 'react';
 import { StatusBar } from 'expo-status-bar';
 import RootNavigator from './src/navigation';

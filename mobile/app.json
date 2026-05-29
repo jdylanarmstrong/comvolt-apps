@@ -42,11 +42,12 @@
           "bluetoothAlwaysPermission": "Allow Comvolt to connect to your battery system"
         }
       ],
+      ["react-native-reanimated"],
       [
         "expo-build-properties",
         {
-          "android": { "minSdkVersion": 23 },
-          "ios": { "deploymentTarget": "16.4" }
+          "android": { "minSdkVersion": 24 },
+          "ios": { "deploymentTarget": "15.1" }
         }
       ]
     ]
