@@ -42,7 +42,6 @@
           "bluetoothAlwaysPermission": "Allow Comvolt to connect to your battery system"
         }
       ],
-      ["react-native-reanimated"],
       [
         "expo-build-properties",
         {
