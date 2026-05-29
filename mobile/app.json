@@ -46,7 +46,7 @@
         "expo-build-properties",
         {
           "android": { "minSdkVersion": 23 },
-          "ios": { "deploymentTarget": "15.1" }
+          "ios": { "deploymentTarget": "16.4" }
         }
       ]
     ]
