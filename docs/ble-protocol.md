@@ -34,9 +34,10 @@ Applies to the **Comvolt 6000** battery system (BLE device name: **YNT5720**).
 
 - `addr` is `0xC3` on this unit.
 - **Total frame length = `7 + len`** (4-byte header + `len` payload + 3-byte trailer).
-- The 3-byte trailer always begins with `0x59`, followed by a 2-byte checksum (likely CRC16;
-  the exact algorithm is **not** reverse-engineered). The app validates frames by start byte
-  (`0x99`), length, and the `0x59` trailer marker rather than by recomputing the CRC.
+- The 3-byte trailer always begins with `0x59`, followed by a 2-byte **CRC-16/MODBUS-family
+  checksum** (polynomial `0x8005` / reflected `0xA001`, recovered by XOR-differencing
+  equal-length status frames — see "Checksum" below). The app currently validates frames by
+  start byte (`0x99`), length, and the `0x59` trailer marker rather than recomputing the CRC.
 - A single BLE notification may contain a partial frame **or multiple concatenated frames**
   (e.g. a 67-byte notification = a 38-byte frame + a 29-byte frame). Accumulate bytes in a
   buffer and split on the framing above.
@@ -148,6 +149,43 @@ Battery power = 0x050E = 1294 W (offset 29)
 
 ---
 
+## Patterns vs the Original JBD Assumption
+
+We initially assumed a JBD BMS. Comparing that assumption to the decoded reality surfaces
+patterns that guide the remaining open items:
+
+| Aspect        | Assumed (JBD)                          | Actual (YNT)                                  |
+|---------------|----------------------------------------|-----------------------------------------------|
+| Start / end   | `0xDD` … `0x77`                        | `0x99` … (no end byte; `0x59` marker pre-CRC) |
+| Checksum      | additive (`0x10000 − sum`)            | **CRC-16/MODBUS family** (poly `0x8005`)      |
+| Transfer      | request/response (write to read)       | **auto-broadcast**; writes ignored            |
+| Current       | signed (sign = direction)              | unsigned magnitude + **direction byte [6]**   |
+| Cells         | every cell                             | **max/min only**                              |
+| Power         | not sent (compute V×I)                 | **sent directly** ([4:6])                     |
+| Temp/cycles/protection/per-cell | all in one status frame | **absent** from the 3 broadcast frames        |
+
+Three patterns fall out of this:
+
+1. **It's a Modbus device at heart.** The CRC polynomial is Modbus's, and the unit's other
+   ports are literally RS485/Modbus. → The 7" screen's RS485 protocol is very likely Modbus RTU
+   with this same CRC, so the screen project's decode should largely transfer.
+2. **The broadcast frames are a summary, not the full BMS dump.** The detailed data JBD puts in
+   one frame (per-cell, temps, cycles, protection) is simply not broadcast here. It most likely
+   lives in **other frame types reachable only by request** — i.e. a write to `FFF2` that we
+   haven't sent. Same lever as control.
+3. **The outputs frame is slot-structured.** AC-out and DC-in occupy fixed 16-bit slots while
+   many slots sit at zero. Solar, AC2, and DC1–8 will populate those zero slots when active —
+   so activating each source/channel pins its slot (predictable, incremental).
+
+**Convergence:** nearly every open item reduces to two levers —
+(a) **capture/replay a write to `FFF2`** (unlocks control, and likely triggers detailed-data
+request frames for temps/protection/per-cell), and
+(b) **observe more active states** (solar, individual channels) to fill the zero slots.
+Cracking the CRC polynomial already does half of lever (a): once we see one real write and pin
+the init/xorout, we can construct valid commands.
+
+---
+
 ## Empirical Verification Log
 
 | Date       | Item                                              | Result |
@@ -161,6 +199,7 @@ Battery power = 0x050E = 1294 W (offset 29)
 | 2026-06    | AC output (outputs frame offset 7)                | ✅ vs stock app (1446/1437/1482 W) |
 | 2026-06    | DC input (outputs frame offset 23)                | ✅ vs stock app (≈297 W) |
 | 2026-06    | Serial number (info frame)                        | ✅ 5720 |
+| 2026-06    | Checksum polynomial = 0x8005/0xA001 (Modbus CRC)  | ✅ XOR-diff over 6 status frames (unique hit) |
 
 ---
 
@@ -175,7 +214,12 @@ Battery power = 0x050E = 1294 W (offset 29)
 - **AC energy (Wh) counter** — outputs frame offset 12 increments; confirm field width/scale.
 - **Status byte 7–8** — small direction-dependent value (`0x0330` discharging, `0x0020`
   charging, `0` idle); purpose unknown.
-- **Trailer checksum** — 2 bytes after the `0x59` marker; CRC algorithm not identified.
+- **Trailer checksum** — polynomial **identified** as `0x8005`/`0xA001` reflected
+  (CRC-16/MODBUS family), proven for status frames via XOR-differencing. Still TBD: the exact
+  `init`, `xorout`, and covered byte range. A single uniform config did not reconcile all three
+  frame *types* (status/outputs/info) over a contiguous range, so each record type may CRC a
+  different span, or a length/type value seeds the init. Pinning this is what's needed to
+  *construct* valid frames (i.e. control writes).
 - **FET / switch control** — the write protocol for toggling main switch / inverter / AC1 is
   not captured. `buildFetCmd` is currently a no-op stub. Capture the stock app's toggle writes
   to FFF2 to decode it.
