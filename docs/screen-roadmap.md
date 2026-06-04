@@ -1,96 +1,78 @@
 # Feature Roadmap
 
-## Phase 1 — BLE App (current)
+## Phase 1 — BLE App (working)
 
-Connects to the JBD BMS in the Comvolt 6000 over Bluetooth.
+Connects to the Comvolt 6000 (YNT5720) over Bluetooth and decodes its proprietary YNT
+protocol — see [`ble-protocol.md`](./ble-protocol.md).
 
-### What's available now
+### What's working now (verified against the stock app)
 
 - **State of charge** (SOC%) with arc gauge
-- **Total voltage**, current, power
-- **Charge/discharge status** and direction
-- **Individual cell voltages** with min/max/delta and balance status
-- **Temperature** (1–3 sensors)
-- **13 protection alarm flags** with live alerting
-- **FET control** — charge and discharge FETs (inverter may map to discharge FET)
-- **Time estimate** — time to full or time to empty
-- **Full BLE packet log** with raw hex and parsed values
+- **Pack voltage, net current, power** — with charging/discharging/idle status
+- **Remaining capacity** (Ah) and time-to-empty estimate
+- **Max / min cell voltage** with delta (the BMS exposes only max/min, not per-cell)
+- **DC input power** and **AC output power** (per-port, over BLE — no PDU hardware needed)
+- **Serial number**
+- **Full BLE packet log** with raw hex and parsed values, plus share/export
+- **Connection resilience** — exponential-backoff reconnect, clean failure handling
 
-### Limitations
+### Known limitations / not yet decoded
 
-- **No per-source input breakdown** — the BMS knows only total current. It does not know whether
-  charging current came from solar, shore power, or the alternator.
-- **No per-channel output breakdown** — the BMS knows total discharge current, not which
-  channel (AC output 1 vs DC channel 3) is drawing what.
-- **No inverter state** (beyond FET status) without PDU data.
-
----
-
-## Phase 2 — PDU Integration (when PDUs arrive)
-
-The AC Power Distribution Unit and DC Power Distribution Unit will expose per-channel data.
-Communication method is TBD (USB, RS485, or a separate BLE/WiFi module).
-
-### Planned additions
-
-- **Per-input monitoring**: Solar wattage, shore power wattage, alternator wattage
-- **Per-output monitoring**: Each AC and DC channel — on/off state, current draw, wattage
-- **Channel control**: Toggle individual AC/DC channels from the app
-- **EcoFlow-style power flow diagram**: Sources → battery → outputs with live wattage labels
-
-### Implementation approach (TBD)
-Once the PDUs arrive, identify the communication interface (likely a USB serial or dedicated
-module). Sniff the protocol using a logic analyzer or serial terminal. The data will either
-be polled or pushed to the app alongside BLE data.
+- **Charge sign** — current is verified positive while discharging; the negative-while-charging
+  case hasn't been captured yet (needs charger-on / loads-off).
+- **Per-channel breakdown** — AC1/AC2 and DC1–8 individual circuits aren't decoded yet; only
+  aggregate AC output and DC input are.
+- **No temperature, no per-cell voltages, no protection-flag decode** over BLE.
+- **No control** — toggling the main switch / inverter / AC1 writes are not captured;
+  `buildFetCmd` is a no-op stub.
 
 ---
 
-## Phase 3 — 7" Touchscreen (when screen arrives)
+## Phase 2 — Deeper BLE Decode (incremental)
 
-The Comvolt 7" touchscreen connects to the battery via **Ethernet cable**, not BLE.
+All achievable with the existing BLE link by capturing more scenarios:
 
-### Investigation plan
-
-1. Connect the screen and a laptop/phone to the same LAN as the battery.
-2. Run Wireshark on the LAN interface while the screen is operating normally.
-3. Identify the protocol from captured TCP/UDP traffic:
-   - **Modbus TCP** (port 502): most common for battery/inverter systems
-   - **Custom TCP socket**: next most common (look for binary framing)
-   - **HTTP/REST**: possible if the BMS has a web server
-4. Once identified, map registers/commands to data fields using the Wireshark capture.
-
-### Possible outcomes
-
-| Finding               | Path forward                                                   |
-|-----------------------|----------------------------------------------------------------|
-| Android-based screen  | Check `adb devices` over USB; sideload custom APK             |
-| Linux + custom app    | Replace the UI process with an Electron or React app           |
-| Modbus TCP protocol   | Add Modbus TCP client to the phone app (same data, more fields)|
-| Custom binary protocol| Reverse-engineer and document, similar to JBD BLE work        |
-
-The Ethernet interface may expose additional data beyond what BLE provides — particularly
-per-input source monitoring — making it the richer data source once integrated.
-
----
-
-## UI Upgrade — Power Flow Diagram
-
-Once per-source and per-output data is available (Phase 2 or 3), the Dashboard will be
-upgraded from a stat-card layout to an EcoFlow-style power flow diagram:
+1. **Charge sign** — capture a charger-on / loads-off session; confirm the current field goes
+   negative and the dashboard flips to CHARGING.
+2. **Per-channel power** — toggle individual AC/DC circuits while logging the outputs frame
+   (`cmd=0xA0/len=0x1F`); map the currently-zero bytes to channels.
+3. **Control writes** — sniff the stock app's main-switch / inverter / AC1 toggles to FFF2
+   (e.g. via nRF Connect or an Android HCI snoop log) and implement real control.
+4. **EcoFlow-style power-flow diagram** once per-channel data is available:
 
 ```
-  [Solar]  [Shore]  [Alternator]
-      ↓        ↓         ↓
-      └────────┴─────────┘
-               ↓
-        [Comvolt 6000]
-         87%  ·  50.9V
-               ↓
-      ┌────────┴─────────┐
-      ↓                  ↓
-   [AC Out]           [DC Out]
-   [Inv ON]         [Ch 1–8]
+   [DC IN]                         [AC OUT]
+      ↓                               ↑
+      └───────► [Comvolt 6000] ──────┘
+                 99% · 13.3V
+                  ↓        ↓
+              [DC 1–8]  [AC 1–2]
 ```
 
-Each arrow shows live wattage. The diagram only makes sense with per-channel data — which
-is why the initial Phase 1 UI uses simple stat cards instead.
+---
+
+## Phase 3 — 7" Touchscreen (separate project)
+
+**Goal:** a separate, dedicated app for the 7" screen — independent of the phone app
+(different form factor 800×480 landscape, different data path). It must communicate with the
+system **natively over the existing wiring — no new hardware**.
+
+### Hardware facts (from the nameplate + user manual)
+- Model **COMVOLT-70CJ-V02**, resolution **800×480**, capacitive touch, DC 10–60V.
+- **No WiFi / no Bluetooth / no USB** exposed — wired only.
+- Ports: **YNT-BUS** (power + RS485 to battery), **YNT-CAN** (to PDU), **VE.CAN** (Victron),
+  VGA/HDMI video in, dry-contact, backup power.
+- Battery comms is **RS485** (the "network cable" is RJ45 carrying RS485, not Ethernet/IP).
+- The UI looks like a custom embedded app (likely Linux/RTOS on an ARM SoC), not stock Android.
+
+### Investigation plan (hands-on, when ready)
+1. Open the unit and identify the SoC / look for a UART debug console and storage.
+2. Determine the OS. If Linux: find how the stock UI launches and whether it can be replaced
+   or run alongside. If Android-like: check for ADB.
+3. Independently, **decode the RS485/Modbus protocol** on the YNT-BUS (logic analyzer or
+   RS485-USB adapter) so a custom UI has a data source. Much of the field knowledge from the
+   BLE decode should transfer.
+4. Build the screen UI for that platform and data path as its own project.
+
+> This is hardware-investigation work that can't proceed remotely — it starts with physically
+> opening the screen and probing it.

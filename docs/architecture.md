@@ -2,9 +2,11 @@
 
 ## Overview
 
-**Comvolt** is a React Native mobile app (iOS + Android) for monitoring and controlling the
-Comvolt 6000 LiFePO4 battery system. It communicates with the battery's JBD BMS over
-Bluetooth Low Energy.
+**Comvolt** is a React Native mobile app (iOS + Android) for monitoring the Comvolt 6000
+LiFePO4 battery system over Bluetooth Low Energy. The battery (BLE name **YNT5720**) speaks a
+**proprietary YNT framing** (`0x99` frames) that was reverse-engineered for this app — see
+[`ble-protocol.md`](./ble-protocol.md). It is **not** a JBD BMS, despite advertising JBD-style
+UUIDs.
 
 ---
 
@@ -12,16 +14,18 @@ Bluetooth Low Energy.
 
 | Layer         | Technology                                          |
 |---------------|-----------------------------------------------------|
-| Framework     | React Native 0.85 via Expo SDK 56                  |
-| Build         | EAS Build (Expo Application Services)               |
+| Framework     | React Native 0.76.9 via **Expo SDK 52**             |
+| Dev build     | `expo prebuild` + `expo run:ios` (local, CocoaPods) |
 | BLE           | react-native-ble-plx v3                             |
-| State         | zustand v5                                          |
+| State         | zustand v5 (with `useShallow` for multi-field selectors) |
 | Navigation    | @react-navigation/native + bottom tabs + native stack |
 | SVG           | react-native-svg (SOC arc gauge)                    |
 | Storage       | @react-native-async-storage/async-storage           |
 | Icons         | @expo/vector-icons (Ionicons)                       |
 
 > **Expo Go will not work** — BLE is a native module requiring a compiled development build.
+> SDK 52 / RN 0.76 was chosen deliberately after SDK 56 / RN 0.85 (new architecture) caused
+> cascading native build failures.
 
 ---
 
@@ -31,34 +35,37 @@ Bluetooth Low Energy.
 comvolt-apps/
 ├── mobile/                         # React Native app
 │   ├── App.tsx                     # Root component (NavigationContainer)
-│   ├── app.json                    # Expo config, BLE plugin, permissions
-│   ├── babel.config.js             # Reanimated plugin (must be last)
+│   ├── app.json                    # Expo config, BLE plugin, permissions, fmt-fix plugin
+│   ├── babel.config.js             # babel-preset-expo only (no reanimated)
 │   ├── package.json
+│   ├── plugins/
+│   │   └── withFmtConstevalFix.js  # Config plugin: patches fmt header (see Build section)
 │   └── src/
 │       ├── theme.ts                # Design tokens: colors, spacing, radius, fontSize
 │       ├── ble/
-│       │   ├── JbdProtocol.ts      # Protocol: commands, frame parsing, checksum
+│       │   ├── JbdProtocol.ts      # YNT `0x99` protocol parser + frame buffer
+│       │   │                       #   (filename retained from the original JBD assumption)
 │       │   └── BleService.ts       # BLE state machine singleton
 │       ├── store/
-│       │   ├── batteryStore.ts     # Connection status + live BMS data (zustand)
+│       │   ├── batteryStore.ts     # Connection status + live battery data (zustand)
 │       │   └── logStore.ts         # Circular log buffer, 500 entries (zustand)
 │       ├── navigation/
 │       │   └── index.tsx           # Root stack (Scan or MainTabs based on connection)
 │       ├── screens/
 │       │   ├── ScanScreen.tsx      # BLE scan, device list, pre-permission prompt
-│       │   ├── DashboardScreen.tsx # SOC gauge, stat cards, stale/fault indicators
-│       │   ├── CellsScreen.tsx     # Per-cell voltage bars + min/max/delta
+│       │   ├── DashboardScreen.tsx # SOC gauge, stat cards, DC-in/AC-out, stale indicator
+│       │   ├── CellsScreen.tsx     # Max/min cell voltage + delta
 │       │   ├── AlarmsScreen.tsx    # Protection flag list (green/red)
-│       │   ├── LogsScreen.tsx      # Live BLE log with hex, share button
-│       │   └── SettingsScreen.tsx  # FET control + device info + disconnect
+│       │   ├── LogsScreen.tsx      # Live BLE log with hex, share button (throttled render)
+│       │   └── SettingsScreen.tsx  # Device info + disconnect (FET control stubbed)
 │       └── components/
 │           ├── SocGauge.tsx        # SVG arc gauge (color = charging vs discharging)
 │           ├── StatCard.tsx        # Metric card (label + value + unit)
 │           └── CellBars.tsx        # Horizontal bar chart for cell voltages
 └── docs/
-    ├── ble-protocol.md             # JBD BMS protocol reference (this repo's source of truth)
+    ├── ble-protocol.md             # YNT BLE protocol reference (source of truth)
     ├── architecture.md             # This file
-    └── screen-roadmap.md           # Phase 2: PDU integration + Ethernet screen
+    └── screen-roadmap.md           # 7" screen + per-channel roadmap
 ```
 
 ---
@@ -67,134 +74,126 @@ comvolt-apps/
 
 ```
 IDLE ──────────────────────────────── (app start, Bluetooth available)
-  │
   │ [user taps Scan]
   ▼
 SCANNING ────────────── 15s timeout → IDLE ("No devices found")
-  │
   │ [user taps device]
   ▼
-CONNECTING ─────────── 10s timeout → IDLE (error toast)
-  │
-  │ [MTU request + service discovery]
+CONNECTING ─────────── failure (e.g. timeout / out of range) → cleanup → IDLE (error toast)
+  │ [service discovery + notify subscription]
   ▼
-CONNECTED (monitoring + polling)
-  │
+CONNECTED (streaming)
   │ [device drops signal]
   ▼
 RECONNECTING ──────────────────────── exponential backoff: 2s, 4s, 8s, 16s, 30s
-  │  \
   │   [max retries exhausted] → IDLE
-  │
   │ [reconnected]
   ▼
 CONNECTED
 
 BLUETOOTH_OFF ─────────────────────── (any state → on Bluetooth PoweredOff event)
-  │
   └── [Bluetooth turned back on] → IDLE
 ```
+
+A failed **manual** connect resets to IDLE and cleans up so the UI never sticks on
+"Connecting…". The reconnect loop manages its own state and only falls back to IDLE after the
+backoff is exhausted.
 
 ---
 
 ## Data Flow
 
 ```
-BMS (YNT5720)
-    │  BLE notify (FFF1)
+Battery (YNT5720)
+    │  BLE notify (FFF1) — device auto-broadcasts, no command needed
     ▼
 BleService.handleNotification()
-    │  accumulate bytes in FrameBuffer
-    │  parse complete frames
-    │  verify checksum
+    │  accumulate bytes in FrameBuffer; split 0x99 frames; validate 0x59 trailer
+    │  parseFrame() → status | outputs | info | unknown
     ▼
-batteryStore.setStatus() / setCells()    logStore.addEntry()
-    │                                           │
-    ▼                                           ▼
-React screens (zustand selectors)         LogsScreen
+batteryStore.setStatus() / setCells() / setOutputs()      logStore.addEntry()
+    │                                                            │
+    ▼                                                            ▼
+React screens (zustand selectors via useShallow)          LogsScreen (sampled @ 2Hz)
 ```
 
-**Poll cycle (from BleService):**
-- Every 3s: write `CMD_READ_STATUS` to FFF2
-- Every 6s: additionally write `CMD_READ_CELLS`
-- Immediate poll on connect
+- The battery **streams** status, outputs, and info frames continuously after the app
+  subscribes to FFF1. No polling is required for telemetry.
+- The app still writes the legacy JBD read bytes to FFF2 on a 3s timer as a harmless
+  keep-alive; the device ignores them.
 
 ---
 
 ## Key Design Decisions
 
-### Write-Without-Response on FFF2
-FFF2 supports both Write and Write Without Response. JBD BMS convention is Write Without
-Response (faster, no ACK round-trip). The app uses `writeCharacteristicWithoutResponseForService`.
+### zustand v5 selectors
+Multi-field selectors must be wrapped in `useShallow` (`zustand/react/shallow`). Returning a
+fresh object literal without it triggers an infinite render loop in zustand v5
+("Maximum update depth exceeded").
 
-### Dynamic Status Frame Length
-The status response is NOT a fixed 27 bytes. It is `23 + (NTC_count × 2)` bytes.
-`NTC_count` is read from byte 22 of the data payload. Different BMS units may have 1–3
-temperature sensors.
+### Frame validation without CRC
+The YNT trailer checksum algorithm isn't reverse-engineered. Frames are validated by start
+byte (`0x99`), declared length, and the `0x59` trailer marker, with single-byte resync on
+mismatch. This is robust enough in practice given BLE's own link-layer CRC.
 
-### Checksum Verification on Received Frames
-All incoming frames are checksum-verified before being applied to state. Invalid frames are
-discarded and logged with `[PROTO] WARN` level. This handles BLE packet corruption.
+### Logs screen render throttling
+The BLE stream appends ~10 log entries/sec. The Logs screen samples the store every 500ms
+(rather than subscribing to every append) and uses memoized rows + FlatList windowing, so the
+live stream can't saturate the JS thread and block navigation.
 
-### Exponential Backoff Reconnect
-On unexpected disconnect, the app retries at 2s → 4s → 8s → 16s → 30s intervals before
-giving up. User-initiated disconnects skip the retry loop.
-
-### FET Control Safety
-Discharge FET toggle requires a two-step confirmation dialog. After sending, the app
-re-polls status after 500ms and reflects the new FET state. The BMS may reject the command
-if hardware protection is active.
+### Exponential backoff reconnect
+On unexpected disconnect the app retries at 2s → 4s → 8s → 16s → 30s before giving up.
+User-initiated disconnects skip the retry loop.
 
 ---
 
 ## Building for Device
 
-EAS Build is required because react-native-ble-plx includes native iOS/Android code.
+react-native-ble-plx requires a compiled native build (no Expo Go).
 
 ```bash
-# One-time setup
-npm install -g eas-cli
 cd mobile && npm install
-eas login
-eas build:configure
-
-# Development build (for testing on device)
-eas build --platform ios --profile development
-eas build --platform android --profile development
-
-# After build installs on device, start the dev server:
-npx expo start --dev-client
+npx expo prebuild --clean        # regenerates ios/ (runs the fmt-fix config plugin)
+cd ios && pod install && cd ..
+npx expo run:ios --device        # builds, installs on iPhone, starts Metro
+# subsequent JS-only changes: just `npx expo start --dev-client`
 ```
 
-### Native Permissions (auto-configured by Expo plugin)
+### fmt consteval build fix
+RN 0.76 bundles `fmt` 11.0.2, whose `consteval` usage newer Apple Clang rejects. A compiler
+define can't override it (the header has no `#ifndef` guard), so `plugins/withFmtConstevalFix.js`
+patches `Pods/fmt/include/fmt/base.h` in the Podfile `post_install` hook to neutralize
+`FMT_CONSTEVAL`. This runs automatically on every `prebuild`/`pod install`.
 
-**iOS** (via `infoPlist` in app.json):
-- `NSBluetoothAlwaysUsageDescription`
-- `NSBluetoothPeripheralUsageDescription`
-- `UIBackgroundModes: [bluetooth-central]`
+### Native Permissions (auto-configured by Expo plugins)
 
-**Android** (via `android.permissions` in app.json):
-- `BLUETOOTH_SCAN` (API ≥ 31)
-- `BLUETOOTH_CONNECT` (API ≥ 31)
-- `ACCESS_FINE_LOCATION` (API < 31 scan requirement)
+**iOS** (`infoPlist` in app.json): `NSBluetoothAlwaysUsageDescription`,
+`NSBluetoothPeripheralUsageDescription`, `UIBackgroundModes: [bluetooth-central]`.
+
+**Android** (`android.permissions`): `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT` (API ≥ 31),
+`ACCESS_FINE_LOCATION` (API < 31 scan requirement).
 
 ---
 
-## What the JBD BMS Provides
+## What the Battery Provides Over BLE
 
-| Data point            | Available? | Notes                           |
-|-----------------------|------------|---------------------------------|
-| State of charge (SOC) | ✅          | 0–100%                          |
-| Total voltage         | ✅          | Accurate to 10mV               |
-| Current (total)       | ✅          | Positive=discharge, neg=charge  |
-| Total power           | ✅          | Calculated: V × I              |
-| Remaining capacity    | ✅          | Ah                              |
-| Individual cell V     | ✅          | Per cell, in mV                 |
-| Temperature(s)        | ✅          | 1–3 sensors depending on build  |
-| Cycle count           | ✅          |                                 |
-| Production date       | ✅          |                                 |
-| Protection faults     | ✅          | 13 fault flags                  |
-| FET on/off control    | ✅          | Charge and discharge separately |
-| Per-source input      | ❌          | Needs PDU (see screen-roadmap)  |
-| Per-channel output    | ❌          | Needs PDU                       |
-| Inverter state/control| ❓          | May map to discharge FET        |
+| Data point              | Available? | Notes                                   |
+|-------------------------|------------|-----------------------------------------|
+| State of charge (SOC)   | ✅         | 0–100%                                  |
+| Pack voltage            | ✅         | 10mV resolution                         |
+| Current (net)           | ✅         | Positive = discharge (charge sign TBD)  |
+| Power                   | ✅         | Direct field + `V × I` cross-check       |
+| Remaining capacity      | ✅         | Ah (0.1Ah resolution)                   |
+| Max / min cell voltage  | ✅         | mV — **only** max/min, not per-cell      |
+| AC output power         | ✅         | watts (outputs frame)                   |
+| DC input power          | ✅         | watts (outputs frame), metered separately|
+| Serial number           | ✅         | 5720                                    |
+| Temperature             | ❌         | Not exposed over BLE                     |
+| Per-cell voltages       | ❌         | Only max/min available                  |
+| Cycle count / prod date | ❌         | Not located in the stream               |
+| Protection fault flags  | ❓         | Not yet decoded (status reads "normal") |
+| FET / switch control    | ❓         | Write protocol not yet captured (stubbed)|
+| Per-channel AC/DC        | ❓         | AC1/AC2, DC1–8 not yet decoded          |
+
+See [`ble-protocol.md`](./ble-protocol.md) "Open Items" for the remaining reverse-engineering
+work.
