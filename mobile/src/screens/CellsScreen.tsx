@@ -1,11 +1,14 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, SafeAreaView } from 'react-native';
+import { useShallow } from 'zustand/react/shallow';
 import { useBatteryStore } from '../store/batteryStore';
 import CellBars from '../components/CellBars';
 import { colors, spacing, radius, fontSize } from '../theme';
 
 export default function CellsScreen() {
-  const { cells, status } = useBatteryStore((s) => ({ cells: s.cells, status: s.status }));
+  const { cells, status } = useBatteryStore(
+    useShallow((s) => ({ cells: s.cells, status: s.status })),
+  );
 
   if (!cells || cells.voltages.length === 0) {
     return (

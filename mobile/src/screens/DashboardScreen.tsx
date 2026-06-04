@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { useShallow } from 'zustand/react/shallow';
 import { useBatteryStore } from '../store/batteryStore';
 import { PROTECTION_FLAGS } from '../ble/JbdProtocol';
 import SocGauge from '../components/SocGauge';
@@ -27,12 +28,14 @@ function useSecondsTicker() {
 }
 
 export default function DashboardScreen() {
-  const { status, lastUpdated, prevProtectionFlags, deviceName } = useBatteryStore((s) => ({
-    status: s.status,
-    lastUpdated: s.lastUpdated,
-    prevProtectionFlags: s.prevProtectionFlags,
-    deviceName: s.deviceName,
-  }));
+  const { status, lastUpdated, prevProtectionFlags, deviceName } = useBatteryStore(
+    useShallow((s) => ({
+      status: s.status,
+      lastUpdated: s.lastUpdated,
+      prevProtectionFlags: s.prevProtectionFlags,
+      deviceName: s.deviceName,
+    })),
+  );
 
   const tick = useSecondsTicker();
   const faultAlertShown = useRef(false);

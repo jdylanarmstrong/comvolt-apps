@@ -4,16 +4,19 @@ import {
   StyleSheet, SafeAreaView, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useShallow } from 'zustand/react/shallow';
 import { useBatteryStore } from '../store/batteryStore';
 import { bleService } from '../ble/BleService';
 import { buildFetCmd } from '../ble/JbdProtocol';
 import { colors, spacing, radius, fontSize } from '../theme';
 
 export default function SettingsScreen() {
-  const { status, deviceName } = useBatteryStore((s) => ({
-    status: s.status,
-    deviceName: s.deviceName,
-  }));
+  const { status, deviceName } = useBatteryStore(
+    useShallow((s) => ({
+      status: s.status,
+      deviceName: s.deviceName,
+    })),
+  );
   const [fetBusy, setFetBusy] = useState(false);
 
   async function handleDischargeToggle() {
