@@ -5,7 +5,6 @@ import {
   CMD_READ_STATUS, CMD_READ_CELLS,
   FrameBuffer,
   uint8ToBase64, base64ToUint8, toHexString,
-  BmsStatus,
 } from './JbdProtocol';
 import { useBatteryStore, ConnectionStatus } from '../store/batteryStore';
 import { logger } from '../store/logStore';
@@ -285,7 +284,7 @@ class BleService {
   // ─── Commands ──────────────────────────────────────────────────────────────
 
   private async sendCmd(bytes: Uint8Array): Promise<void> {
-    if (!this.device) return;
+    if (!this.device || bytes.length === 0) return;
     logger.debug('BLE', `→ FFF2 (${bytes.length}B)`, toHexString(bytes));
     try {
       await this.device.writeCharacteristicWithoutResponseForService(
@@ -313,30 +312,30 @@ class BleService {
 
     for (const frame of frames) {
       if (frame.type === 'invalid') {
-        logger.warn('PROTO', 'Invalid/corrupt frame discarded');
+        logger.debug('PROTO', 'Partial/unrecognized frame skipped');
         continue;
       }
-      if (frame.type === 'error') {
-        logger.warn('PROTO', `BMS error for register 0x${frame.register.toString(16).toUpperCase()}`);
+      if (frame.type === 'unknown') {
+        // Other broadcast frames (e.g. output channels) — not decoded yet.
+        continue;
+      }
+      if (frame.type === 'info') {
+        logger.debug('PROTO', `Device serial: ${frame.serial}`);
         continue;
       }
       if (frame.type === 'status') {
         const s = frame.data;
         const power = (s.voltage * s.current).toFixed(0);
-        const tempStr = s.temps.map((t) => `${t.toFixed(1)}°C`).join('/');
         logger.info('PROTO',
           `SOC:${s.soc}% V:${s.voltage.toFixed(2)}V I:${s.current.toFixed(2)}A P:${power}W ` +
-          `Tmp:${tempStr} Prot:0x${s.protectionFlags.toString(16).toUpperCase().padStart(4, '0')} ` +
-          `FET:chg=${s.chargeFetOn} dis=${s.dischargeFetOn}`
+          `Cell max:${s.maxCellmV}mV min:${s.minCellmV}mV (${s.cellCount} cells)`
         );
+        // While current's byte offset is unverified, surface all candidates so a
+        // load test instantly reveals which field is the real current.
+        logger.debug('PROTO', `current? ${s.currentCandidatesStr}`);
         store.setStatus(s);
-      }
-      if (frame.type === 'cells') {
-        const c = frame.data;
-        const min = Math.min(...c.voltages);
-        const max = Math.max(...c.voltages);
-        logger.info('PROTO', `Cells(${c.voltages.length}): min=${min}mV max=${max}mV Δ=${max - min}mV`);
-        store.setCells(c);
+        // This device reports only max/min cell voltage, not per-cell values.
+        store.setCells({ voltages: [s.maxCellmV, s.minCellmV] });
       }
     }
   }

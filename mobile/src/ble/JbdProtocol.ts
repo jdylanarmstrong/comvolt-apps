@@ -1,66 +1,84 @@
-// JBD BMS BLE Protocol
-// Service:    0000FFF0-0000-1000-8000-00805F9B34FB
-// Write (TX): 0000FFF2-0000-1000-8000-00805F9B34FB  (write-without-response)
-// Notify (RX):0000FFF1-0000-1000-8000-00805F9B34FB
+// Comvolt / YNT BMS BLE Protocol  (device: YNT5720)
+//
+// IMPORTANT: despite advertising JBD-style UUIDs (service FFF0, write FFF2,
+// notify FFF1), this device does NOT speak the JBD protocol. It auto-broadcasts
+// its own framing on the notify characteristic, ignoring whatever we write.
+//
+// Frame layout (confirmed against the stock Comvolt app on a YNT5720):
+//   0x99 [cmd] [addr=0xC3] [len] [payload(len bytes)] [0x59] [crc_hi] [crc_lo]
+//   total length = 7 + len
+//
+// Status frame is cmd=0xA0, len=0x16 (22). Payload byte map (empirically verified):
+//   [1]      SOC %                         (0x64 = 100%)
+//   [2:4]    remaining capacity, 0.1Ah     (0x1257 = 469.5 Ah)
+//   [9:11]   pack voltage, 10mV            (0x0578 = 14.00 V)
+//   [11:13]  current, 10mA signed  *GUESS* (0 at rest — verify under load)
+//   [13]     cell count                    (0x04)
+//   [16:18]  max cell voltage, mV          (0x0DB0 = 3504 mV)
+//   [18:20]  min cell voltage, mV          (0x0DAA = 3498 mV)
+//
+// Info frame is cmd=0xA1, len=0x08: payload[6:8] = serial (0x1658 = 5720).
 
 export const SERVICE_UUID = '0000FFF0-0000-1000-8000-00805F9B34FB';
 export const WRITE_UUID   = '0000FFF2-0000-1000-8000-00805F9B34FB';
 export const NOTIFY_UUID  = '0000FFF1-0000-1000-8000-00805F9B34FB';
 
-// Hardcoded read commands (verified checksum: 0x10000 - register = result)
+export const FRAME_START = 0x99;
+export const TRAILER_MARK = 0x59; // first of the 3-byte trailer (0x59 + crc16)
+
+// The device auto-streams data; these legacy JBD reads are kept only as harmless
+// keep-alive pokes (the YNT5720 ignores them). Empty arrays are skipped by the
+// writer, so they never hit the wire if we decide to stop poking.
 export const CMD_READ_STATUS = new Uint8Array([0xDD, 0xA5, 0x03, 0x00, 0xFF, 0xFD, 0x77]);
 export const CMD_READ_CELLS  = new Uint8Array([0xDD, 0xA5, 0x04, 0x00, 0xFF, 0xFC, 0x77]);
 export const CMD_READ_INFO   = new Uint8Array([0xDD, 0xA5, 0x05, 0x00, 0xFF, 0xFB, 0x77]);
 
-// Checksum: sum = reg + len + data_bytes; checksum = 0x10000 - (sum & 0xFFFF)
-function jbdChecksum(bytes: number[]): [number, number] {
-  const sum = bytes.reduce((a, b) => a + b, 0);
-  const ck = (0x10000 - (sum & 0xffff)) & 0xffff;
-  return [(ck >> 8) & 0xff, ck & 0xff];
-}
-
-// FET control command — NOTE: verify on your hardware before using.
-// Some JBD variants use a single control byte instead of two.
-// 0x00 = FET on, 0x01 = FET off
-export function buildFetCmd(chargeOn: boolean, dischargeOn: boolean): Uint8Array {
-  const cb = chargeOn    ? 0x00 : 0x01;
-  const db = dischargeOn ? 0x00 : 0x01;
-  const [ckH, ckL] = jbdChecksum([0xe1, 0x02, cb, db]);
-  return new Uint8Array([0xdd, 0x5a, 0xe1, 0x02, cb, db, ckH, ckL, 0x77]);
+// FET/switch control command for this device is not yet reverse-engineered.
+// Returns an empty array (the writer skips empty payloads) so the Settings
+// screen still compiles without sending anything bogus to the battery.
+// TODO: capture the stock app's main-switch / inverter toggle and decode it.
+export function buildFetCmd(_chargeOn: boolean, _dischargeOn: boolean): Uint8Array {
+  return new Uint8Array([]);
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface BmsStatus {
-  voltage: number;        // V (÷100 from 10mV)
-  current: number;        // A (÷100, negative = charging)
+  voltage: number;        // V
+  current: number;        // A  (+ discharge, − charge)  *offset unverified*
   remainAh: number;       // Ah
-  nominalAh: number;      // Ah
+  nominalAh: number;      // Ah (derived from remain / SOC)
   soc: number;            // 0–100 %
-  cycles: number;
-  productionDate: string; // "YYYY-MM-DD"
-  chargeFetOn: boolean;
+  cycles: number;         // unknown over BLE → 0
+  productionDate: string; // unknown over BLE → '—'
+  chargeFetOn: boolean;   // unknown mapping → true (battery operational)
   dischargeFetOn: boolean;
   cellCount: number;
-  ntcCount: number;
-  temps: number[];        // °C, one per sensor
-  protectionFlags: number; // raw uint16 bitmask
-  balanceLow: number;     // cells 1–16 bitmask
-  balanceHigh: number;    // cells 17–32 bitmask
-  swVersion: number;
+  ntcCount: number;       // temps not exposed over BLE → 0
+  temps: number[];        // °C, empty for this device
+  protectionFlags: number; // fault bit map TBD → 0
+  balanceLow: number;     // not exposed → 0
+  balanceHigh: number;    // not exposed → 0
+  swVersion: number;      // unknown → 0
+  maxCellmV: number;
+  minCellmV: number;
+  rawPayload: string;          // hex of the status payload, for debugging
+  currentCandidatesStr: string; // candidate current offsets, for load-test debugging
 }
 
 export interface BmsCells {
-  voltages: number[]; // mV per cell
+  voltages: number[]; // mV — for this device: [maxCell, minCell]
 }
 
 export type BmsFrame =
   | { type: 'status'; data: BmsStatus }
   | { type: 'cells';  data: BmsCells }
-  | { type: 'error';  register: number }
+  | { type: 'info';   serial: number }
+  | { type: 'unknown'; cmd: number; len: number }
   | { type: 'invalid' };
 
-// Human-readable protection flag descriptions (bit index → label)
+// Kept for the Alarms screen. The Comvolt fault bit map isn't decoded yet, so
+// protectionFlags is always 0 (= all clear) until we capture a fault.
 export const PROTECTION_FLAGS: Record<number, string> = {
   0:  'Cell overvoltage',
   1:  'Cell undervoltage',
@@ -113,92 +131,75 @@ function readS16BE(buf: Uint8Array, offset: number): number {
   return u > 0x7fff ? u - 0x10000 : u;
 }
 
-function parseProductionDate(raw: number): string {
-  const day   = raw & 0x1f;
-  const month = (raw >> 5) & 0x0f;
-  const year  = ((raw >> 9) & 0x7f) + 2000;
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-function verifyFrameChecksum(frame: Uint8Array): boolean {
-  // Checksum covers: register + status + data_length + all_data_bytes
-  const dataLen = frame[3];
-  const covered: number[] = [];
-  for (let i = 1; i <= 3 + dataLen; i++) {
-    covered.push(frame[i]);
-  }
-  const [expH, expL] = jbdChecksum(covered);
-  return frame[4 + dataLen] === expH && frame[4 + dataLen + 1] === expL;
+/**
+ * While the current byte-offset is unverified, log every plausible candidate so
+ * that the moment a load is applied we can see which field moves off zero.
+ * Returns a compact string for the debug log.
+ */
+export function currentCandidates(payload: Uint8Array): string {
+  const s16 = (o: number) => (o + 1 < payload.length ? readS16BE(payload, o) : 0);
+  return `[4]=${s16(4)} [6]=${s16(6)} [11]=${s16(11)} [13]=${s16(13)}`;
 }
 
 export function parseFrame(frame: Uint8Array): BmsFrame {
-  // Minimum valid frame: DD [reg] [status] [len=0] [ck_h] [ck_l] 77 = 7 bytes
   if (frame.length < 7) return { type: 'invalid' };
-  if (frame[0] !== 0xdd) return { type: 'invalid' };
+  if (frame[0] !== FRAME_START) return { type: 'invalid' };
 
-  const dataLen = frame[3];
-  const totalExpected = 7 + dataLen;
-  if (frame.length < totalExpected) return { type: 'invalid' };
-  if (frame[4 + dataLen + 2] !== 0x77) return { type: 'invalid' };
+  const cmd = frame[1];
+  const len = frame[3];
+  const total = 7 + len;
+  if (frame.length < total) return { type: 'invalid' };
+  // Trailer sanity check: the 3-byte trailer always starts with 0x59.
+  if (frame[4 + len] !== TRAILER_MARK) return { type: 'invalid' };
 
-  if (!verifyFrameChecksum(frame)) return { type: 'invalid' };
+  const payload = frame.slice(4, 4 + len);
 
-  const register = frame[1];
-  const status   = frame[2];
-
-  if (status !== 0x00) return { type: 'error', register };
-
-  const data = frame.slice(4, 4 + dataLen);
-
-  if (register === 0x03) {
-    // Status response — dynamic length based on NTC count
-    if (data.length < 23) return { type: 'invalid' };
-
-    const ntcCount = data[22];
-    const expectedDataLen = 23 + ntcCount * 2;
-    if (data.length < expectedDataLen) return { type: 'invalid' };
-
-    const temps: number[] = [];
-    for (let i = 0; i < ntcCount; i++) {
-      const rawK = readU16BE(data, 23 + i * 2);
-      temps.push((rawK - 2731) / 10.0);
-    }
-
-    const fetStatus = data[20];
+  // Main status frame
+  if (cmd === 0xa0 && len === 0x16) {
+    const soc      = payload[1];
+    const remainAh = readU16BE(payload, 2) / 10;
+    const voltage  = readU16BE(payload, 9) / 100;
+    const current  = readS16BE(payload, 11) / 100; // GUESS — verify under load
+    const cellCount = payload[13];
+    const maxCellmV = readU16BE(payload, 16);
+    const minCellmV = readU16BE(payload, 18);
+    const nominalAh = soc > 0 ? remainAh / (soc / 100) : remainAh;
 
     return {
       type: 'status',
       data: {
-        voltage:       readU16BE(data, 0) / 100,
-        current:       readS16BE(data, 2) / 100,
-        remainAh:      readU16BE(data, 4) / 100,
-        nominalAh:     readU16BE(data, 6) / 100,
-        soc:           data[19],
-        cycles:        readU16BE(data, 8),
-        productionDate: parseProductionDate(readU16BE(data, 10)),
-        balanceLow:    readU16BE(data, 12),
-        balanceHigh:   readU16BE(data, 14),
-        protectionFlags: readU16BE(data, 16),
-        swVersion:     data[18],
-        chargeFetOn:   (fetStatus & 0x01) !== 0,
-        dischargeFetOn: (fetStatus & 0x02) !== 0,
-        cellCount:     data[21],
-        ntcCount,
-        temps,
+        voltage,
+        current,
+        remainAh,
+        nominalAh,
+        soc,
+        cycles: 0,
+        productionDate: '—',
+        chargeFetOn: true,
+        dischargeFetOn: true,
+        cellCount,
+        ntcCount: 0,
+        temps: [],
+        protectionFlags: 0,
+        balanceLow: 0,
+        balanceHigh: 0,
+        swVersion: 0,
+        maxCellmV,
+        minCellmV,
+        rawPayload: toHexString(payload),
+        currentCandidatesStr: currentCandidates(payload),
       },
     };
   }
 
-  if (register === 0x04) {
-    if (data.length < 2 || data.length % 2 !== 0) return { type: 'invalid' };
-    const voltages: number[] = [];
-    for (let i = 0; i < data.length; i += 2) {
-      voltages.push(readU16BE(data, i));
-    }
-    return { type: 'cells', data: { voltages } };
+  // Info frame (serial number)
+  if (cmd === 0xa1 && len >= 0x08) {
+    return { type: 'info', serial: readU16BE(payload, 6) };
   }
 
-  return { type: 'invalid' };
+  // Other broadcast frames (e.g. cmd 0xA0/len 0x1F = output channels) — not
+  // decoded yet. Report as 'unknown' so the buffer doesn't treat them as errors.
+  return { type: 'unknown', cmd, len };
 }
 
 // ─── Buffer ───────────────────────────────────────────────────────────────────
@@ -221,7 +222,7 @@ export class FrameBuffer {
     const frames: BmsFrame[] = [];
 
     while (this.buf.length >= 7) {
-      const start = this.buf.indexOf(0xdd);
+      const start = this.buf.indexOf(FRAME_START);
       if (start === -1) {
         this.buf = [];
         break;
@@ -229,18 +230,21 @@ export class FrameBuffer {
       if (start > 0) {
         this.buf = this.buf.slice(start);
       }
-      if (this.buf.length < 4) break;
+      if (this.buf.length < 7) break;
 
-      const dataLen   = this.buf[3];
-      const totalLen  = 7 + dataLen;
+      const len = this.buf[3];
+      const total = 7 + len;
+      if (this.buf.length < total) break; // wait for the rest of the frame
 
-      if (this.buf.length < totalLen) break;
+      // Validate trailer marker; if wrong, this 0x99 was spurious — resync.
+      if (this.buf[4 + len] !== TRAILER_MARK) {
+        this.buf = this.buf.slice(1);
+        continue;
+      }
 
-      const frameBytes = new Uint8Array(this.buf.slice(0, totalLen));
-      this.buf = this.buf.slice(totalLen);
-
-      const result = parseFrame(frameBytes);
-      frames.push(result);
+      const frameBytes = new Uint8Array(this.buf.slice(0, total));
+      this.buf = this.buf.slice(total);
+      frames.push(parseFrame(frameBytes));
     }
 
     return frames;
