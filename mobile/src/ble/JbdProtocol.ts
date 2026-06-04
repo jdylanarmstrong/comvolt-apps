@@ -21,6 +21,7 @@
 //
 // Output frame is cmd=0xA0, len=0x1F (31):
 //   [7:9]    AC output power, watts        (0x05A6 = 1446 W; matches AC·OUT)
+//   [23:25]  DC input power, watts         (0x0124 = 292 W; matches DC·IN)
 //
 // Info frame is cmd=0xA1, len=0x08: payload[6:8] = serial (0x1658 = 5720).
 
@@ -76,6 +77,7 @@ export interface BmsCells {
 
 export interface BmsOutputs {
   acOutputW: number; // AC output power, watts
+  dcInputW: number;  // DC input (charging) power, watts
 }
 
 export type BmsFrame =
@@ -190,9 +192,15 @@ export function parseFrame(frame: Uint8Array): BmsFrame {
     };
   }
 
-  // Output frame — AC output power
+  // Output frame — AC output + DC input power
   if (cmd === 0xa0 && len === 0x1f) {
-    return { type: 'outputs', data: { acOutputW: readU16BE(payload, 7) } };
+    return {
+      type: 'outputs',
+      data: {
+        acOutputW: readU16BE(payload, 7),
+        dcInputW: readU16BE(payload, 23),
+      },
+    };
   }
 
   // Info frame (serial number)

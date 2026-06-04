@@ -148,6 +148,14 @@ export default function DashboardScreen() {
           <Text style={styles.infoText}>{timeEstimate}</Text>
         </View>
 
+        {/* DC input (charging) */}
+        {outputs && outputs.dcInputW > 0 && (
+          <View style={styles.infoRow}>
+            <Ionicons name="battery-charging-outline" size={14} color={colors.textSecondary} />
+            <Text style={styles.infoText}>DC input: {outputs.dcInputW} W</Text>
+          </View>
+        )}
+
         {/* AC output */}
         {outputs && outputs.acOutputW > 0 && (
           <View style={styles.infoRow}>
