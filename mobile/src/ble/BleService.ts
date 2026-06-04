@@ -134,7 +134,15 @@ class BleService {
 
   async connect(deviceId: string, deviceName: string): Promise<void> {
     this.reconnectCancelled = false;
-    await this.connectInternal(deviceId, deviceName);
+    try {
+      await this.connectInternal(deviceId, deviceName);
+    } catch (err) {
+      // Manual connect failed (e.g. out of range / timed out). Reset state so
+      // the UI doesn't stay stuck on the "Connecting…" spinner.
+      this.cleanup(false);
+      this.setStatus('idle');
+      throw err;
+    }
   }
 
   private async connectInternal(deviceId: string, deviceName: string): Promise<void> {
@@ -146,8 +154,9 @@ class BleService {
         timeout: CONNECT_TIMEOUT_MS,
         requestMTU: 512,
       });
-      const mtu = await this.device.requestMTU(512);
-      logger.info('APP', `Connected. MTU=${mtu}`);
+      // requestMTU resolves to the Device with the negotiated .mtu number.
+      const negotiated = await this.device.requestMTU(512);
+      logger.info('APP', `Connected. MTU=${negotiated.mtu}`);
 
       this.setStatus('connecting'); // still discovering
       await this.device.discoverAllServicesAndCharacteristics();
