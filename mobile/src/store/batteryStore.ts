@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { BmsStatus, BmsCells } from '../ble/JbdProtocol';
+import { BmsStatus, BmsCells, BmsOutputs } from '../ble/JbdProtocol';
 
 export type ConnectionStatus =
   | 'idle'
@@ -16,6 +16,7 @@ interface BatteryState {
   status: BmsStatus | null;
   prevProtectionFlags: number;
   cells: BmsCells | null;
+  outputs: BmsOutputs | null;
   lastUpdated: number | null;
 
   setConnectionStatus(s: ConnectionStatus): void;
@@ -23,6 +24,7 @@ interface BatteryState {
   clearDevice(): void;
   setStatus(s: BmsStatus): void;
   setCells(c: BmsCells): void;
+  setOutputs(o: BmsOutputs): void;
 }
 
 export const useBatteryStore = create<BatteryState>()((set) => ({
@@ -32,6 +34,7 @@ export const useBatteryStore = create<BatteryState>()((set) => ({
   status: null,
   prevProtectionFlags: 0,
   cells: null,
+  outputs: null,
   lastUpdated: null,
 
   setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
@@ -44,6 +47,7 @@ export const useBatteryStore = create<BatteryState>()((set) => ({
       deviceName: null,
       status: null,
       cells: null,
+      outputs: null,
       lastUpdated: null,
       prevProtectionFlags: 0,
     }),
@@ -56,4 +60,6 @@ export const useBatteryStore = create<BatteryState>()((set) => ({
     })),
 
   setCells: (cells) => set({ cells }),
+
+  setOutputs: (outputs) => set({ outputs }),
 }));

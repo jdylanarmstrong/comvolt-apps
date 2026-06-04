@@ -8,14 +8,19 @@
 //   0x99 [cmd] [addr=0xC3] [len] [payload(len bytes)] [0x59] [crc_hi] [crc_lo]
 //   total length = 7 + len
 //
-// Status frame is cmd=0xA0, len=0x16 (22). Payload byte map (empirically verified):
+// Status frame is cmd=0xA0, len=0x16 (22). Payload byte map (empirically verified
+// against the stock Comvolt app, including a ~123A load test):
 //   [1]      SOC %                         (0x64 = 100%)
 //   [2:4]    remaining capacity, 0.1Ah     (0x1257 = 469.5 Ah)
+//   [4:6]    power, watts (unsigned)       (0x0668 = 1640 W under load)
 //   [9:11]   pack voltage, 10mV            (0x0578 = 14.00 V)
-//   [11:13]  current, 10mA signed  *GUESS* (0 at rest — verify under load)
+//   [11:13]  current, 10mA signed          (0x300C = 12300 → 123.00 A)
 //   [13]     cell count                    (0x04)
 //   [16:18]  max cell voltage, mV          (0x0DB0 = 3504 mV)
 //   [18:20]  min cell voltage, mV          (0x0DAA = 3498 mV)
+//
+// Output frame is cmd=0xA0, len=0x1F (31):
+//   [7:9]    AC output power, watts        (0x05A6 = 1446 W; matches AC·OUT)
 //
 // Info frame is cmd=0xA1, len=0x08: payload[6:8] = serial (0x1658 = 5720).
 
@@ -62,17 +67,21 @@ export interface BmsStatus {
   swVersion: number;      // unknown → 0
   maxCellmV: number;
   minCellmV: number;
-  rawPayload: string;          // hex of the status payload, for debugging
-  currentCandidatesStr: string; // candidate current offsets, for load-test debugging
+  rawPayload: string; // hex of the status payload, for debugging
 }
 
 export interface BmsCells {
   voltages: number[]; // mV — for this device: [maxCell, minCell]
 }
 
+export interface BmsOutputs {
+  acOutputW: number; // AC output power, watts
+}
+
 export type BmsFrame =
   | { type: 'status'; data: BmsStatus }
   | { type: 'cells';  data: BmsCells }
+  | { type: 'outputs'; data: BmsOutputs }
   | { type: 'info';   serial: number }
   | { type: 'unknown'; cmd: number; len: number }
   | { type: 'invalid' };
@@ -131,16 +140,6 @@ function readS16BE(buf: Uint8Array, offset: number): number {
   return u > 0x7fff ? u - 0x10000 : u;
 }
 
-/**
- * While the current byte-offset is unverified, log every plausible candidate so
- * that the moment a load is applied we can see which field moves off zero.
- * Returns a compact string for the debug log.
- */
-export function currentCandidates(payload: Uint8Array): string {
-  const s16 = (o: number) => (o + 1 < payload.length ? readS16BE(payload, o) : 0);
-  return `[4]=${s16(4)} [6]=${s16(6)} [11]=${s16(11)} [13]=${s16(13)}`;
-}
-
 export function parseFrame(frame: Uint8Array): BmsFrame {
   if (frame.length < 7) return { type: 'invalid' };
   if (frame[0] !== FRAME_START) return { type: 'invalid' };
@@ -187,9 +186,13 @@ export function parseFrame(frame: Uint8Array): BmsFrame {
         maxCellmV,
         minCellmV,
         rawPayload: toHexString(payload),
-        currentCandidatesStr: currentCandidates(payload),
       },
     };
+  }
+
+  // Output frame — AC output power
+  if (cmd === 0xa0 && len === 0x1f) {
+    return { type: 'outputs', data: { acOutputW: readU16BE(payload, 7) } };
   }
 
   // Info frame (serial number)

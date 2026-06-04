@@ -330,12 +330,12 @@ class BleService {
           `SOC:${s.soc}% V:${s.voltage.toFixed(2)}V I:${s.current.toFixed(2)}A P:${power}W ` +
           `Cell max:${s.maxCellmV}mV min:${s.minCellmV}mV (${s.cellCount} cells)`
         );
-        // While current's byte offset is unverified, surface all candidates so a
-        // load test instantly reveals which field is the real current.
-        logger.debug('PROTO', `current? ${s.currentCandidatesStr}`);
         store.setStatus(s);
         // This device reports only max/min cell voltage, not per-cell values.
         store.setCells({ voltages: [s.maxCellmV, s.minCellmV] });
+      }
+      if (frame.type === 'outputs') {
+        store.setOutputs(frame.data);
       }
     }
   }

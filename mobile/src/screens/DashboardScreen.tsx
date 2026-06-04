@@ -28,12 +28,13 @@ function useSecondsTicker() {
 }
 
 export default function DashboardScreen() {
-  const { status, lastUpdated, prevProtectionFlags, deviceName } = useBatteryStore(
+  const { status, lastUpdated, prevProtectionFlags, deviceName, outputs } = useBatteryStore(
     useShallow((s) => ({
       status: s.status,
       lastUpdated: s.lastUpdated,
       prevProtectionFlags: s.prevProtectionFlags,
       deviceName: s.deviceName,
+      outputs: s.outputs,
     })),
   );
 
@@ -146,6 +147,14 @@ export default function DashboardScreen() {
           <Ionicons name="time-outline" size={14} color={colors.textSecondary} />
           <Text style={styles.infoText}>{timeEstimate}</Text>
         </View>
+
+        {/* AC output */}
+        {outputs && outputs.acOutputW > 0 && (
+          <View style={styles.infoRow}>
+            <Ionicons name="flash-outline" size={14} color={colors.textSecondary} />
+            <Text style={styles.infoText}>AC output: {outputs.acOutputW} W</Text>
+          </View>
+        )}
 
         {/* Temperatures */}
         {status.temps.length > 0 && (
