@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
   SafeAreaView, Share,
@@ -6,6 +6,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useLogStore, LogEntry, LogLevel } from '../store/logStore';
 import { colors, spacing, radius, fontSize } from '../theme';
+
+// The BLE stream appends ~10 log entries/sec. Re-rendering this list on every
+// append saturates the JS thread and makes the tab bar unresponsive, so we
+// sample the store on an interval instead of subscribing to every change.
+const REFRESH_MS = 500;
 
 const LEVEL_COLORS: Record<LogLevel, string> = {
   debug: colors.logDebug,
@@ -18,7 +23,7 @@ function formatTime(d: Date): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}.${String(d.getMilliseconds()).padStart(3, '0')}`;
 }
 
-function LogRow({ entry }: { entry: LogEntry }) {
+const LogRow = React.memo(function LogRow({ entry }: { entry: LogEntry }) {
   const levelColor = LEVEL_COLORS[entry.level];
   return (
     <View style={styles.logRow}>
@@ -34,15 +39,23 @@ function LogRow({ entry }: { entry: LogEntry }) {
       </View>
     </View>
   );
-}
+});
 
 export default function LogsScreen() {
-  const entries = useLogStore((s) => s.entries);
-  const clear   = useLogStore((s) => s.clear);
-  const listRef = useRef<FlatList>(null);
+  // Throttled snapshot of the log buffer (sampled, not subscribed) so the
+  // high-frequency BLE stream can't starve navigation.
+  const [entries, setEntries] = useState<LogEntry[]>(() => useLogStore.getState().entries);
+
+  useEffect(() => {
+    const id = setInterval(() => setEntries(useLogStore.getState().entries), REFRESH_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  // Newest first. Memoized so we only reverse when the snapshot changes.
+  const data = useMemo(() => [...entries].reverse(), [entries]);
 
   async function handleShare() {
-    const text = entries
+    const text = useLogStore.getState().entries
       .map((e) => {
         const line = `${formatTime(e.timestamp)} [${e.category}] [${e.level.toUpperCase()}] ${e.message}`;
         return e.hex ? `${line}\n  ${e.hex}` : line;
@@ -50,6 +63,11 @@ export default function LogsScreen() {
       .join('\n');
 
     await Share.share({ message: text, title: 'Comvolt BLE Log' });
+  }
+
+  function handleClear() {
+    useLogStore.getState().clear();
+    setEntries([]);
   }
 
   return (
@@ -60,24 +78,26 @@ export default function LogsScreen() {
           <TouchableOpacity onPress={handleShare} style={styles.iconBtn}>
             <Ionicons name="share-outline" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={clear} style={styles.iconBtn}>
+          <TouchableOpacity onPress={handleClear} style={styles.iconBtn}>
             <Ionicons name="trash-outline" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
       </View>
 
-      {entries.length === 0 ? (
+      {data.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>No log entries yet — connect to the battery to start logging.</Text>
         </View>
       ) : (
         <FlatList
-          ref={listRef}
-          data={[...entries].reverse()}
+          data={data}
           keyExtractor={(e) => String(e.id)}
           contentContainerStyle={styles.list}
           renderItem={({ item }) => <LogRow entry={item} />}
-          onLayout={() => listRef.current?.scrollToOffset({ offset: 0, animated: false })}
+          initialNumToRender={20}
+          maxToRenderPerBatch={20}
+          windowSize={11}
+          removeClippedSubviews
         />
       )}
     </SafeAreaView>
