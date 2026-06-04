@@ -166,11 +166,15 @@ Battery power = 0x050E = 1294 W (offset 29)
 
 ## Open Items / Not Yet Reverse-Engineered
 
+- **Solar input** — the system has separate solar input ports. Not yet captured. The DC·IN
+  field (outputs frame [23:25]) may aggregate solar + wall/alternator, or solar may have its
+  own field. **Test planned next** (solar charging session).
 - **Per-channel breakdown** — AC1/AC2 and DC1–8 individual channels (the stock app and screen
   show these). Likely in the outputs frame's currently-zero bytes; capture while toggling
   individual circuits.
 - **AC energy (Wh) counter** — outputs frame offset 12 increments; confirm field width/scale.
-- **Status bytes 6–7** — ~515 when the inverter is active, 0 at rest; purpose unknown.
+- **Status byte 7–8** — small direction-dependent value (`0x0330` discharging, `0x0020`
+  charging, `0` idle); purpose unknown.
 - **Trailer checksum** — 2 bytes after the `0x59` marker; CRC algorithm not identified.
 - **FET / switch control** — the write protocol for toggling main switch / inverter / AC1 is
   not captured. `buildFetCmd` is currently a no-op stub. Capture the stock app's toggle writes

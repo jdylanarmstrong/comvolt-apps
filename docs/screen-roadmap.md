@@ -8,7 +8,7 @@ protocol — see [`ble-protocol.md`](./ble-protocol.md).
 ### What's working now (verified against the stock app)
 
 - **State of charge** (SOC%) with arc gauge
-- **Pack voltage, net current, power** — with charging/discharging/idle status
+- **Pack voltage, net current, power** — with verified charging / discharging / idle direction
 - **Remaining capacity** (Ah) and time-to-empty estimate
 - **Max / min cell voltage** with delta (the BMS exposes only max/min, not per-cell)
 - **DC input power** and **AC output power** (per-port, over BLE — no PDU hardware needed)
@@ -18,8 +18,8 @@ protocol — see [`ble-protocol.md`](./ble-protocol.md).
 
 ### Known limitations / not yet decoded
 
-- **Charge sign** — current is verified positive while discharging; the negative-while-charging
-  case hasn't been captured yet (needs charger-on / loads-off).
+- **Solar input** — separate solar input ports not yet captured (test planned). Unknown whether
+  solar is included in DC·IN or reported separately.
 - **Per-channel breakdown** — AC1/AC2 and DC1–8 individual circuits aren't decoded yet; only
   aggregate AC output and DC input are.
 - **No temperature, no per-cell voltages, no protection-flag decode** over BLE.
@@ -32,13 +32,13 @@ protocol — see [`ble-protocol.md`](./ble-protocol.md).
 
 All achievable with the existing BLE link by capturing more scenarios:
 
-1. **Charge sign** — capture a charger-on / loads-off session; confirm the current field goes
-   negative and the dashboard flips to CHARGING.
+1. **Solar input** — capture a solar-charging session (separate solar input ports). Determine
+   whether solar shows in the existing DC·IN field or has its own field in the outputs frame.
 2. **Per-channel power** — toggle individual AC/DC circuits while logging the outputs frame
    (`cmd=0xA0/len=0x1F`); map the currently-zero bytes to channels.
 3. **Control writes** — sniff the stock app's main-switch / inverter / AC1 toggles to FFF2
    (e.g. via nRF Connect or an Android HCI snoop log) and implement real control.
-4. **EcoFlow-style power-flow diagram** once per-channel data is available:
+4. **EcoFlow-style power-flow diagram** once per-source/per-channel data is available:
 
 ```
    [DC IN]                         [AC OUT]
