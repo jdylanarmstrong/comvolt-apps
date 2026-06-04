@@ -13,8 +13,9 @@
 //   [1]      SOC %                         (0x64 = 100%)
 //   [2:4]    remaining capacity, 0.1Ah     (0x1257 = 469.5 Ah)
 //   [4:6]    power, watts (unsigned)       (0x0668 = 1640 W under load)
+//   [6]      direction flag                (0 = idle, 1 = charging, 2 = discharging)
 //   [9:11]   pack voltage, 10mV            (0x0578 = 14.00 V)
-//   [11:13]  current, 10mA signed          (0x300C = 12300 → 123.00 A)
+//   [11:13]  current magnitude, 10mA       (0x300C = 12300 → 123.00 A; unsigned)
 //   [13]     cell count                    (0x04)
 //   [16:18]  max cell voltage, mV          (0x0DB0 = 3504 mV)
 //   [18:20]  min cell voltage, mV          (0x0DAA = 3498 mV)
@@ -159,8 +160,12 @@ export function parseFrame(frame: Uint8Array): BmsFrame {
   if (cmd === 0xa0 && len === 0x16) {
     const soc      = payload[1];
     const remainAh = readU16BE(payload, 2) / 10;
+    // Direction flag drives the current sign; the current field is an unsigned
+    // magnitude. App convention: negative = charging, positive = discharging.
+    const direction = payload[6]; // 0 = idle, 1 = charging, 2 = discharging
     const voltage  = readU16BE(payload, 9) / 100;
-    const current  = readS16BE(payload, 11) / 100; // GUESS — verify under load
+    const currentMag = readU16BE(payload, 11) / 100;
+    const current  = direction === 1 ? -currentMag : currentMag;
     const cellCount = payload[13];
     const maxCellmV = readU16BE(payload, 16);
     const minCellmV = readU16BE(payload, 18);

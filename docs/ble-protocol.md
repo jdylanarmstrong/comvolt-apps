@@ -61,22 +61,25 @@ Payload offsets (0-based, within the 22-byte payload). ✅ = verified against th
 | 1      | uint8  | SOC                | % (0–100)             | ✅ 0x64 = 100% |
 | 2–3    | uint16 | Remaining capacity | `÷ 10` → Ah           | ✅ 0x1257 = 469.5 Ah |
 | 4–5    | uint16 | Power (magnitude)  | watts                 | ✅ 0x0668 = 1640 W |
+| 6      | uint8  | Direction flag     | 0=idle, 1=charge, 2=discharge | ✅ all three states |
 | 9–10   | uint16 | Pack voltage       | `÷ 100` → V (10mV)    | ✅ 0x0578 = 14.00 V |
-| 11–12  | int16  | Current (signed)   | `÷ 100` → A (10mA)    | ✅ 0x300C = 123.00 A |
+| 11–12  | uint16 | Current magnitude  | `÷ 100` → A (10mA)    | ✅ 0x300C = 123.00 A |
 | 13     | uint8  | Cell count         | —                     | ✅ 0x04 = 4 cells |
 | 16–17  | uint16 | Max cell voltage   | mV                    | ✅ 0x0DB0 = 3504 mV |
 | 18–19  | uint16 | Min cell voltage   | mV                    | ✅ 0x0DAA = 3498 mV |
 
-**Sign convention:** current is positive while **discharging**. (Negative-while-charging is
-the expected convention but has **not** yet been captured — see Open Items.)
+**Sign convention:** the current field (offset 11–12) is an **unsigned magnitude**; the
+charge/discharge **direction comes from the flag at offset 6** (0 = idle/待机中,
+1 = charging/充电中, 2 = discharging/放电中). The app applies the sign as negative = charging,
+positive = discharging. All three states verified against the stock app.
 
-**Power field:** offset 4–5 is the device's own power reading in watts and matches the stock
-app's headline wattage. The app currently derives power as `V × I` (which gives a signed value
-for charge/discharge); the direct field is available as a cross-check.
+**Power field:** offset 4–5 is the device's own (unsigned) power reading in watts and matches
+the stock app's headline wattage. The app derives signed power as `V × I` (negative when
+charging) for the dashboard; the direct field is available as a cross-check.
 
-Other payload bytes (`0`, `6–8`, `14–15`, `20–21`) are not fully decoded. Notably bytes 6–7
-read ~`0x0204` (≈515) whenever the inverter/AC output is active and `0` at rest — purpose
-unknown (see Open Items).
+Bytes `0`, `7–8`, `14–15`, `20–21` are not fully decoded. Byte 7–8 carries a small
+direction-dependent value (e.g. `0x0330` discharging, `0x0020` charging, `0` idle) — purpose
+unknown.
 
 ### Example
 ```
@@ -85,8 +88,9 @@ unknown (see Open Items).
 SOC = 0x64 = 100%
 Remaining = 0x1250 = 4688 ÷10 = 468.8 Ah
 Power = 0x0668 = 1640 W
+Direction = 0x02 = discharging
 Voltage = 0x0536 = 1334 ÷100 = 13.34 V
-Current = 0x300C = 12300 ÷100 = 123.00 A (discharging)
+Current = 0x300C = 12300 ÷100 = 123.00 A (sign from direction → +discharge)
 Cells = 0x04 = 4
 Max cell = 0x0D0B = 3339 mV,  Min cell = 0x0D08 = 3336 mV
 ```
@@ -152,6 +156,7 @@ Battery power = 0x050E = 1294 W (offset 29)
 | 2026-06    | Device is NOT JBD; uses `0x99` YNT framing        | ✅ live capture |
 | 2026-06    | SOC, voltage, remaining Ah (status frame)         | ✅ vs stock app (100%, 14.00V, 469.5Ah) |
 | 2026-06    | Current offset 11 + power offset 4 (≈123 A load)  | ✅ vs stock app (123 A, 1640 W) |
+| 2026-06    | Direction flag offset 6 (idle/charge/discharge)   | ✅ all 3 states vs stock app |
 | 2026-06    | Max/min cell voltage tracks live load sag         | ✅ vs stock app |
 | 2026-06    | AC output (outputs frame offset 7)                | ✅ vs stock app (1446/1437/1482 W) |
 | 2026-06    | DC input (outputs frame offset 23)                | ✅ vs stock app (≈297 W) |
@@ -161,8 +166,6 @@ Battery power = 0x050E = 1294 W (offset 29)
 
 ## Open Items / Not Yet Reverse-Engineered
 
-- **Charge sign** — confirm the current field goes negative (and the app flips to CHARGING)
-  when DC input exceeds total load. Requires a charger-on / loads-off capture.
 - **Per-channel breakdown** — AC1/AC2 and DC1–8 individual channels (the stock app and screen
   show these). Likely in the outputs frame's currently-zero bytes; capture while toggling
   individual circuits.

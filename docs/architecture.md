@@ -181,7 +181,7 @@ patches `Pods/fmt/include/fmt/base.h` in the Podfile `post_install` hook to neut
 |-------------------------|------------|-----------------------------------------|
 | State of charge (SOC)   | ✅         | 0–100%                                  |
 | Pack voltage            | ✅         | 10mV resolution                         |
-| Current (net)           | ✅         | Positive = discharge (charge sign TBD)  |
+| Current (net)           | ✅         | Magnitude + direction flag (charge/discharge/idle) |
 | Power                   | ✅         | Direct field + `V × I` cross-check       |
 | Remaining capacity      | ✅         | Ah (0.1Ah resolution)                   |
 | Max / min cell voltage  | ✅         | mV — **only** max/min, not per-cell      |
