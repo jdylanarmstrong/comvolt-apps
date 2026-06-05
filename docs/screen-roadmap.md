@@ -18,8 +18,9 @@ protocol — see [`ble-protocol.md`](./ble-protocol.md).
 
 ### Known limitations / not yet decoded
 
-- **Solar input** — separate solar input ports not yet captured (test planned). Unknown whether
-  solar is included in DC·IN or reported separately.
+- **Solar input** — ✅ confirmed in the `DC·IN` field (outputs frame [23:25]). Solar sessions
+  show `direction=charging` and non-zero DC·IN; the stock app aggregates all DC charging sources
+  into the single "DC·IN" total. No separate solar field observed at ≈25–112 W.
 - **Per-channel breakdown** — AC1/AC2 and DC1–8 individual circuits aren't decoded yet; only
   aggregate AC output and DC input are.
 - **No temperature, no per-cell voltages, no protection-flag decode** over BLE.
@@ -32,8 +33,9 @@ protocol — see [`ble-protocol.md`](./ble-protocol.md).
 
 All achievable with the existing BLE link by capturing more scenarios:
 
-1. **Solar input** — capture a solar-charging session (separate solar input ports). Determine
-   whether solar shows in the existing DC·IN field or has its own field in the outputs frame.
+1. **Solar input** — ✅ done: solar appears in the existing DC·IN field (outputs frame [23:25]).
+   Follow-up: capture simultaneous wall+solar to see if the total exceeds what each shows
+   individually, confirming true aggregation vs only one source at a time.
 2. **Per-channel power** — toggle individual AC/DC circuits while logging the outputs frame
    (`cmd=0xA0/len=0x1F`); map the currently-zero bytes to channels.
 3. **Control writes** — sniff the stock app's main-switch / inverter / AC1 toggles to FFF2

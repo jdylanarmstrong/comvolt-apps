@@ -200,14 +200,17 @@ the init/xorout, we can construct valid commands.
 | 2026-06    | DC input (outputs frame offset 23)                | ✅ vs stock app (≈297 W) |
 | 2026-06    | Serial number (info frame)                        | ✅ 5720 |
 | 2026-06    | Checksum polynomial = 0x8005/0xA001 (Modbus CRC)  | ✅ XOR-diff over 6 status frames (unique hit) |
+| 2026-06    | Solar input → same DC·IN field (offset 23)        | ✅ solar-only session: `0x0070`=112 W in DC·IN slot, direction=charging confirmed |
 
 ---
 
 ## Open Items / Not Yet Reverse-Engineered
 
-- **Solar input** — the system has separate solar input ports. Not yet captured. The DC·IN
-  field (outputs frame [23:25]) may aggregate solar + wall/alternator, or solar may have its
-  own field. **Test planned next** (solar charging session).
+- **Solar input** — ✅ **confirmed**: solar uses the same `DC·IN` field at outputs frame
+  payload[23–24] as wall/alternator DC charging. The stock app aggregates all DC sources into
+  one "DC·IN" total; there is no separate solar field at least at the power levels captured
+  (≈25–112 W). Higher-wattage solar sessions or simultaneous wall+solar may reveal more
+  detail in the currently-zero slots.
 - **Per-channel breakdown** — AC1/AC2 and DC1–8 individual channels (the stock app and screen
   show these). Likely in the outputs frame's currently-zero bytes; capture while toggling
   individual circuits.

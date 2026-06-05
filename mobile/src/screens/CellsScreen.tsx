@@ -23,7 +23,6 @@ export default function CellsScreen() {
   const voltages = cells.voltages;
   const min   = Math.min(...voltages);
   const max   = Math.max(...voltages);
-  const avg   = voltages.reduce((a, b) => a + b, 0) / voltages.length;
   const delta = max - min;
 
   const isBalanced = delta <= 20; // within 20mV
@@ -33,12 +32,16 @@ export default function CellsScreen() {
   const balanceHigh = status?.balanceHigh ?? 0;
   const isBalancing = balanceLow !== 0 || balanceHigh !== 0;
 
+  // The battery reports actual cell count in the status frame; the BLE broadcast
+  // only exposes max/min voltages (not per-cell), so voltages.length is always 2.
+  const cellCount = status?.cellCount ?? voltages.length;
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.scroll}>
         {/* Header stats */}
         <View style={styles.header}>
-          <Text style={styles.title}>{voltages.length} Cells</Text>
+          <Text style={styles.title}>{cellCount} Cells</Text>
           <View style={[styles.badge, { borderColor: isBalanced ? colors.primary : colors.amber }]}>
             <Text style={[styles.badgeText, { color: isBalanced ? colors.primary : colors.amber }]}>
               {isBalancing ? 'Balancing' : isBalanced ? 'Balanced' : 'Imbalanced'}
@@ -50,7 +53,6 @@ export default function CellsScreen() {
           {[
             { label: 'Min', value: `${min} mV`, color: colors.danger },
             { label: 'Max', value: `${max} mV`, color: colors.primary },
-            { label: 'Avg', value: `${avg.toFixed(0)} mV`, color: colors.textPrimary },
             { label: 'Δ',   value: `${delta} mV`, color: delta > 50 ? colors.danger : delta > 20 ? colors.amber : colors.primary },
           ].map(({ label, value, color }) => (
             <View key={label} style={styles.statBox}>
@@ -59,6 +61,7 @@ export default function CellsScreen() {
             </View>
           ))}
         </View>
+        <Text style={styles.note}>BLE exposes max/min only — per-cell voltages not available</Text>
 
         {/* Cell bars */}
         <View style={styles.barsCard}>
@@ -95,5 +98,10 @@ const styles = StyleSheet.create({
   barsCard: {
     backgroundColor: colors.surface, borderRadius: radius.md,
     padding: spacing.md,
+  },
+  note: {
+    fontSize: fontSize.xs, color: colors.textSecondary,
+    textAlign: 'center', fontStyle: 'italic',
+    marginTop: -spacing.xs,
   },
 });
